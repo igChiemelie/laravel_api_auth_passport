@@ -1,0 +1,349 @@
+<?php
+
+namespace App\Http\Controllers\API;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Carbon;
+use Laravel\Passport\HasApiTokens;
+use Illuminate\Support\Facades\Hash;
+use App\Models\User;
+use Laravel\Socialite\Facades\Socialite;
+use Illuminate\Support\Str;  // this is for make a Random token in that time User wanna send special Token to his Gmail
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Validator;
+
+
+class AuthSocialController extends Controller
+{
+    // 'google' = 'google';
+    CONST FACEBOOK_TYPE = 'facebook';
+
+    public function SocialSignup(Request $r, $provider)
+    {
+        $user = Socialite::driver($provider)->user();
+        // return Socialite::driver('google')->stateless()->user();
+        return response()->json([
+            'message' => $r,
+            'provider' => $provider,
+            'user' => $user
+        ]);
+        
+        // $validator = Validator::make($r->all(), [
+        //     'code' => 'nullable|string',
+        //     'hash' => 'nullable|string',
+        //     'otp' => 'nullable|numeric',
+        //     'token' => 'nullable|string',
+        //     'secret' => 'nullable|string',
+
+        // ]);
+        // if ($validator->fails()) {
+        //     return [
+        //         'message' => 'Incorrect Data Posted',
+        //         'status' => 445,
+        //     ];
+        // }
+
+        // $hash = $r->hash ?? null;
+        // $hashuser = Cache::get($hash);
+        // if ($hashuser) {
+        //     return $this->SocialSignupNext($r, $hashuser);
+        // }
+        // try {
+        //     // Socialite will pick response data automatic
+        //     $user = Socialite::driver($provider)->user();
+        //    $token = $user->token ?? null;
+        //     $refreshToken = $user->refreshToken ?? null;
+        //     $expiresIn = $user->expiresIn ?? null;
+        //     $tokenSecret = $user->tokenSecret ?? null;
+        //     $id = $user->id ?? $user->getId();
+        //     $nickname = $user->nickname ?? $user->getNickname();
+        //     $firstName = $user->name->firstName ?? null;
+        //     $lastName = $user->name->lastName ?? null;
+        //     $name = $user->name ?? $firstName . ' ' . $lastName ?? null;
+        //     $email = $user->getEmail();
+        //     $profileImage = $user->getAvatar();
+
+        //      $data =  [
+        //         'name' => $name,
+        //         'nickname' => $nickname,
+        //         'profileImage' => $profileImage,
+        //         'username' => '',
+        //         'email' => $email,
+        //         'provider' => $provider,
+        //         'provider_id' => $id,
+        //         'token' => $token,
+        //         'tokenSecret' => $tokenSecret,
+        //         'refreshToken' => $refreshToken,
+        //         'expiresIn' => $expiresIn,
+
+        //     ];
+        // // this is optional can be skip you can return your user data from here
+        // if($email){
+
+        // return $this->SocialSignupNext($r, $data);
+
+        // }
+
+        // } catch (\Throwable $th) {
+        //     logger($th);
+        // }
+
+        // return [
+        //         'message' => 'Unknow Error',
+        //         'status' => 445,
+        // ];
+    }
+
+
+    public function SocialSignupNext($request, $userdata)
+    {
+        $email = $this->xlean($userdata['email']);
+        $provider = $this->clean($userdata['provider']);
+        $provider_id = $this->clean($userdata['provider_id']);
+        $name = $this->nlean($userdata['name']);
+        $usr = User::where('email', $email)->get();
+
+        $user =  $usr->where('provider', $provider)
+            ->where('provider_id', $provider_id)
+            ->first();
+
+        if ($user) {
+            return $this->SocialLogin($request, $user);
+        }
+        $user = $usr->first();
+        if ($user) {
+            $user->update([
+
+                'provider' => $provider,
+                'provider_id' => $provider_id,
+
+            ]);
+            return $this->SocialLogin($request, $user);
+        }
+        $u =  User::create([
+            'name' => $name,
+            'email' => $email,
+            'provider' => $provider,
+            'provider_id' => $provider_id,
+
+        ]);
+        // this is optional can be skip you can return your user data from here
+        return $this->SocialLogin($request, $u);
+    }
+
+
+
+    public function SocialLogin($r, $user)
+    {
+
+        $hashid =  Str::random(12);
+
+        // to verify additional security
+        if ($user->google2fa_secret && !$this->mlean($r->otp)) {
+            Cache::put($hashid, $user, now()->addMinutes(15));
+            return [
+                'message' => 'Unauthorized',
+                'status' => 444,
+                'hash' => $hashid
+            ];
+        }
+        // check 2fa
+        // if ($this->mlean($r->otp)) {
+        //     $g = \Google2FA::verifyKeyNewer(
+        //         $user->google2fa_secret,
+        //         ($this->mlean($r->otp)),
+        //         $user->google2fa_ts
+        //     );
+        //     if (!$g) {
+        //         return [
+        //             'message' => '2FA Expired Or Incorrect Code',
+        //             'status' => 445
+        //         ];
+        //     } else {
+        //         $user->update([
+
+        //             'google2fa_ts' => $g
+
+        //         ]);
+        //         // optional incase you are using passport oAuth
+        //         $tokenResult = $user->createToken('Personal Access Token');
+        //         $token = $tokenResult->token;
+        //         $token->save();
+        //         return [
+        //             'u' => [
+        //                 'data' => $tokenResult->accessToken,
+        //                 'user' => $user
+        //             ]
+        //         ];
+        //     }
+        // }
+
+        $tokenResult = $user->createToken('Personal Access Token');
+        $token = $tokenResult->token;
+        $token->save();
+
+        return [
+            'u' => [
+                        'data' => $tokenResult->accessToken,
+                        'user' => $user
+                    ]
+        ];
+    }
+
+    // public function handleGoogleRedirect(){
+    //     return Socialite::driver('google')->redirect();
+    // }
+
+    // public function handleGoogleCallback(){
+    //    try {
+    //         $user = Socialite::driver('google')->user();
+    //         $userExisted = User::where('oauth_id', $user->id)->where('oauth_type', 'google')->first();
+    //         if ($userExisted) {
+
+    //             Auth::login($userExisted);
+    //             // return
+
+    //             $tokenResut1 = $userExisted->createToken('myApp');
+
+    //             $token = $tokenResut1->token;
+
+    //             return response()->json([
+    //                 'access_token' => $tokenResut1->accessToken,
+    //                 'token_type' =>  'Bearer',
+    //                 'data' => Auth::user(),
+    //                 'expires_at' => Carbon::parse(
+    //                     $tokenResut1->token->expires_at
+    //                 )->toDateTimeString()
+    //             ],200);
+    //         }else{
+    //             $newUser = User::create([
+    //                 'name' => $user->name,
+    //                 'email' => $user->email,
+    //                 'oauth_id' => $user->id,
+    //                 'oauth_type' => 'google',
+    //                 'passowrd' => Hash::make($user->id),
+    //             ]);
+
+    //             Auth::login($newUser);
+
+    //             return response()->json([
+    //                 'message' => 'success'
+    //             ],200);
+
+    //         }
+    //    } catch (\Throwable $e) {
+    //         dd($e);
+    //    }
+    // }
+
+    // public function handleFacebookRedirect(){
+    //     return Socialite::driver(static::FACEBOOK_TYPE)->redirect();
+    // }
+
+    // public function handleFacebookCallback(){
+    //    try {
+    //         $user = Socialite::driver(static::FACEBOOK_TYPE)->user();
+    //         $userExisted = User::where('oauth_id', $user->id)->where('oauth_type', static::FACEBOOK_TYPE)->first();
+    //         if ($userExisted) {
+
+    //             Auth::login($userExisted);
+    //             // return
+
+    //             $tokenResut1 = $userExisted->createToken('myApp');
+
+    //             $token = $tokenResut1->token;
+
+    //             return response()->json([
+    //                 'access_token' => $tokenResut1->accessToken,
+    //                 'token_type' =>  'Bearer',
+    //                 'data' => Auth::user(),
+    //                 'expires_at' => Carbon::parse(
+    //                     $tokenResut1->token->expires_at
+    //                 )->toDateTimeString()
+    //             ],200);
+    //         }else{
+    //             $newUser = User::create([
+    //                 'name' => $user->name,
+    //                 'email' => $user->email,
+    //                 'oauth_id' => $user->id,
+    //                 'oauth_type' => static::FACEBOOK_TYPE,
+    //                 'passowrd' => Hash::make($user->id),
+    //             ]);
+
+    //             Auth::login($newUser);
+
+    //             return response()->json([
+    //                 'message' => 'success'
+    //             ],200);
+
+    //         }
+    //    } catch (\Throwable $e) {
+    //         dd($e);
+    //    }
+    // }
+
+    // Google login
+    // public function redirectToGoogle()
+    // {
+    //     return Socialite::driver('google')->redirect();
+    // }
+
+    // // Google callback
+    // public function handleGoogleCallback()
+    // {
+    //     $user = Socialite::driver('google')->user();
+    //     // $user = Socialite::driver($provider)->user();
+
+    //     // $this->_registerOrLoginUser($user);
+
+    //     // Return home after login
+    //     // return redirect()->route('home');
+
+    //     // return response()->json([
+    //     //     'message' => 'success'
+    //     // ],200);
+    //     return response()->json($user);
+    // }
+
+    // Facebook login
+    public function redirectToFacebook()
+    {
+        return Socialite::driver('facebook')->redirect();
+    }
+
+    // Facebook callback
+    public function handleFacebookCallback()
+    {
+        $user = Socialite::driver('facebook')->user();
+
+        $this->_registerOrLoginUser($user);
+
+        // Return home after login
+        // return redirect()->route('home');
+
+        return response()->json([
+            'message' => 'success'
+        ],200);
+    }
+
+    protected function _registerOrLoginUser($data)
+    {
+        $user = User::where('email', '=', $data->email)->first();
+        if (!$user) {
+            $user = new User();
+            $user->name = $data->name;
+            $user->email = $data->email;
+            $user->provider_id = $data->id;
+            $user->avatar = $data->avatar;
+            $user->oauth_id = $data->id;
+            $user->passowrd = $data->$user->id;
+            $user->save();
+
+   
+        }
+
+        Auth::login($user);
+    }
+}
